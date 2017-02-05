@@ -11,6 +11,7 @@
 #include <unistd.h>
 #include <signal.h>
 #include <stdarg.h>
+#include <errno.h>
 
 #include <pthread.h>
 
@@ -95,10 +96,13 @@ static void *worker(void *data) {
       back = buf;
       sock = uw_dequeue();
     }
+    else {
+      qprintf("Keeping old socket\n");
+    }
 
     uw_set_remoteSock(ctx, sock);
 
-    qprintf("Handling connection with thread #%d.\n", me);
+    qprintf("Handling connection with thread #%d, sock %d\n", me, sock);
 
     while (1) {
       int r;
@@ -115,7 +119,7 @@ static void *worker(void *data) {
         }
         new_buf = realloc(buf, new_buf_size);
         if(!new_buf) {
-          qfprintf(stderr, "Realloc failed while receiving header\n");
+          qfprintf(stderr, "Realloc failed while receiving header, sock %d\n", sock);
           close(sock);
           sock = 0;
           break;
@@ -128,21 +132,29 @@ static void *worker(void *data) {
       *back = 0;
       body = strstr(buf, "\r\n\r\n");
       if (body == NULL) {
+
+        qfprintf(stderr, "Recv about  to start, sock %d size %ld\n",
+              sock, buf_size - 1 - (back - buf));
+
         r = recv(sock, back, buf_size - 1 - (back - buf), 0);
 
         if (r < 0) {
-          qfprintf(stderr, "Recv failed while receiving header, retcode %d errno %m\n", r);
+          qfprintf(stderr, "Recv failed while receiving header, sock %d retcode %d size %ld errno %d (%m)\n",
+              sock, r, buf_size - 1 - (back - buf), errno);
           close(sock);
           sock = 0;
           break;
         }
 
         if (r == 0) {
-          qprintf("Connection closed.\n");
+          qprintf("Connection closed, sock %d\n", sock);
           close(sock);
           sock = 0;
           break;
         }
+
+        qfprintf(stderr, "Recv normal, sock %d retcode %d size %ld\n",
+              sock, r, buf_size - 1 - (back - buf));
 
         back += r;
         *back = 0;
@@ -208,7 +220,7 @@ static void *worker(void *data) {
             }
 
             back += r;
-            *back = 0;      
+            *back = 0;
           }
 
           after = body + clen;
@@ -305,6 +317,7 @@ static void *worker(void *data) {
               // No pipelining going on here.
               // We'd might as well try to switch to a different connection,
               // while we wait for more input on this one.
+              qprintf("Re-enqueuing socket, sock %d\n", sock);
               uw_enqueue(sock);
               sock = 0;
             } else {
@@ -313,13 +326,16 @@ static void *worker(void *data) {
               back = buf + kept;
             }
           } else {
+            qprintf("Closing socket, sock %d\n", sock);
             close(sock);
             sock = 0;
           }
-        } else if (rr == KEEP_OPEN)
+        } else if (rr == KEEP_OPEN) {
+          qprintf("Keeping socket open, sock %d\n", sock);
           sock = 0;
+        }
         else
-          fprintf(stderr, "Illegal uw_request return code: %d\n", rr);
+          fprintf(stderr, "Illegal uw_request retcode, code %d sock %d\n", rr, sock);
 
         break;
       }
@@ -356,9 +372,9 @@ int main(int argc, char *argv[]) {
   socklen_t my_size = 0, sin_size;
   int yes = 1, uw_port = 8080, nthreads = 1, i, *names, opt;
   int recv_timeout_sec = 5;
- 
+
   signal(SIGINT, sigint);
-  signal(SIGPIPE, SIG_IGN); 
+  signal(SIGPIPE, SIG_IGN);
 
   // default if not specified: IPv4 with my IP
   memset(&my_addr, 0, sizeof my_addr);
@@ -506,7 +522,7 @@ int main(int argc, char *argv[]) {
   }
 
   for (i = 0; i < nthreads; ++i) {
-    pthread_t thread;    
+    pthread_t thread;
     names[i] = i;
     if (pthread_create_big(&thread, NULL, worker, &names[i])) {
       fprintf(stderr, "Error creating worker thread #%d\n", i);
@@ -520,11 +536,14 @@ int main(int argc, char *argv[]) {
     if (new_fd < 0) {
       qfprintf(stderr, "Socket accept failed\n");
     } else {
-      qprintf("Accepted connection.\n");
+      qprintf("Accepted connection, sock %d\n", new_fd);
 
       if (keepalive) {
-        int flag = 1; 
-        setsockopt(new_fd, IPPROTO_TCP, TCP_NODELAY, (char *) &flag, sizeof(int));
+        qprintf("Setting TCP_NODELAY (keepalive), sock %d\n", new_fd);
+        int ret = setsockopt(new_fd, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(int));
+        if(ret != 0) {
+          qfprintf(stderr, "Keepalive setting failed, errcode %d errno %d\n", ret, errno);
+        }
       }
 
       if(recv_timeout_sec>0) {
@@ -534,7 +553,7 @@ int main(int argc, char *argv[]) {
         tv.tv_sec = recv_timeout_sec;
         ret = setsockopt(new_fd, SOL_SOCKET, SO_RCVTIMEO, (char *)&tv, sizeof(struct timeval));
         if(ret != 0) {
-          qfprintf(stderr, "Timeout setting failed, errcode %d errno '%m'\n", ret);
+          qfprintf(stderr, "Timeout setting failed, errcode %d errno %d\n", ret, errno);
         }
       }
 
