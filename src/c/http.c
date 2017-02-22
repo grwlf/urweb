@@ -531,7 +531,7 @@ int main(int argc, char *argv[]) {
   }
 
   while (1) {
-    int new_fd = accept(sockfd, &their_addr.sa, &sin_size);
+    int new_fd = accept4(sockfd, &their_addr.sa, &sin_size, SOCK_CLOEXEC);
 
     if (new_fd < 0) {
       qfprintf(stderr, "Socket accept failed\n");
