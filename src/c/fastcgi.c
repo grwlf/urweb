@@ -91,7 +91,7 @@ static int fastcgi_send(FCGI_Output *o,
   o->r.type = type;
   assert(current_request_id <= UINT16_MAX);
   o->r.requestIdB1 = current_request_id >> 8;
-  o->r.requestIdB0 = current_request_id & 0x000000ff;
+  o->r.requestIdB0 = 1;//current_request_id & 0x000000ff;
   o->r.contentLengthB1 = contentLength >> 8;
   o->r.contentLengthB0 = contentLength & 255;
   return uw_really_send(o->sock, &o->r, sizeof(o->r) - 65535 + contentLength);
