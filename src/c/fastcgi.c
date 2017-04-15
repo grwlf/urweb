@@ -639,7 +639,7 @@ int main(int argc, char *argv[]) {
   }
 
   while (1) {
-    int new_fd = accept(FCGI_LISTENSOCK_FILENO, (struct sockaddr *)&their_addr, &sin_size);
+    int new_fd = accept4(FCGI_LISTENSOCK_FILENO, (struct sockaddr *)&their_addr, &sin_size, SOCK_CLOEXEC);
 
     if (new_fd < 0) {
       fprintf(stderr, "Socket accept failed\n");
